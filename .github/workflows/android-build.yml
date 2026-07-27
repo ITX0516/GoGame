@@ -25,11 +25,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK and CMake
-        run: |
-          yes | sdkmanager "ndk;26.1.10909125" || true
-          yes | sdkmanager "cmake;3.22.1" || true
-
       - name: Download Gradle Wrapper JAR
         run: |
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then

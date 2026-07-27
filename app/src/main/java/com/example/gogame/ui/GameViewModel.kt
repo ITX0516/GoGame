@@ -3,11 +3,15 @@ package com.example.gogame.ui
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.example.gogame.engine.EngineCallback
-import com.example.gogame.engine.LeelaManager
+import androidx.lifecycle.viewModelScope
+import com.example.gogame.engine.LeelaEngine
 import com.example.gogame.model.GoGame
 import com.example.gogame.model.Move
 import com.example.gogame.model.Stone
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,7 +41,8 @@ class GameViewModel(private val context: Context) : ViewModel() {
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
-    private var leelaManager: LeelaManager? = null
+    private var leelaEngine: LeelaEngine? = null
+    private var aiJob: Job? = null
 
     val game: GoGame
         get() = _game
@@ -46,48 +51,11 @@ class GameViewModel(private val context: Context) : ViewModel() {
         updateUiState()
     }
 
-    fun initEngine() {
-        if (leelaManager != null) return
-
-        leelaManager = LeelaManager(context.applicationContext)
-        leelaManager?.setCallback(object : EngineCallback {
-            override fun onEngineReady() {
-                _uiState.value = _uiState.value.copy(
-                    engineReady = true,
-                    engineError = null
-                )
-                if (_uiState.value.gameMode == GameMode.PVE &&
-                    _uiState.value.currentPlayer == _uiState.value.aiColor &&
-                    !_game.isGameOver()
-                ) {
-                    requestAiMove()
-                }
-            }
-
-            override fun onEngineError(error: String) {
-                _uiState.value = _uiState.value.copy(
-                    engineReady = false,
-                    engineError = error,
-                    isAiThinking = false
-                )
-            }
-
-            override fun onMoveGenerated(move: Move) {
-                applyAiMove(move)
-            }
-
-            override fun onInfo(info: String) {
-            }
-        })
-        leelaManager?.start()
-    }
-
-    private fun ensureEngineStarted(): Boolean {
-        if (leelaManager == null) {
-            initEngine()
-            return false
+    private fun ensureEngine(): LeelaEngine {
+        if (leelaEngine == null) {
+            leelaEngine = LeelaEngine(context.applicationContext)
         }
-        return leelaManager?.isReady() == true
+        return leelaEngine!!
     }
 
     fun placeStone(x: Int, y: Int): Boolean {
@@ -101,7 +69,6 @@ class GameViewModel(private val context: Context) : ViewModel() {
         val result = _game.placeStone(x, y)
         if (result) {
             updateUiState()
-            syncEngineBoard()
             checkAndRequestAiMove()
         }
         return result
@@ -111,7 +78,6 @@ class GameViewModel(private val context: Context) : ViewModel() {
         if (_uiState.value.isAiThinking) return
         _game.pass()
         updateUiState()
-        syncEngineBoard()
         checkAndRequestAiMove()
     }
 
@@ -126,10 +92,7 @@ class GameViewModel(private val context: Context) : ViewModel() {
         val result = _game.undo()
         if (result && _uiState.value.gameMode == GameMode.PVE) {
             _game.undo()
-            if (leelaManager?.isReady() == true) {
-                leelaManager?.undo()
-                leelaManager?.undo()
-            }
+            syncUndo()
         }
         updateUiState()
         return result
@@ -139,9 +102,7 @@ class GameViewModel(private val context: Context) : ViewModel() {
         if (_uiState.value.isAiThinking) return
         _game.reset()
         updateUiState()
-        if (leelaManager?.isReady() == true) {
-            leelaManager?.clearBoard()
-        }
+        syncClearBoard()
     }
 
     fun setGameMode(mode: GameMode) {
@@ -153,11 +114,99 @@ class GameViewModel(private val context: Context) : ViewModel() {
         _uiState.value = _uiState.value.copy(aiColor = color)
     }
 
-    fun setAiThinking(thinking: Boolean) {
-        _uiState.value = _uiState.value.copy(isAiThinking = thinking)
+    private fun checkAndRequestAiMove() {
+        if (_uiState.value.gameMode != GameMode.PVE) return
+        if (_game.isGameOver()) return
+        if (_uiState.value.currentPlayer != _uiState.value.aiColor) return
+        if (_uiState.value.isAiThinking) return
+
+        requestAiMove()
     }
 
-    fun applyAiMove(move: Move) {
+    private fun requestAiMove() {
+        aiJob?.cancel()
+        aiJob = viewModelScope.launch(Dispatchers.IO) {
+            setAiThinking(true)
+            clearEngineError()
+
+            try {
+                val engine = ensureEngine()
+                val readyResult = engine.ensureEngineReady()
+                if (readyResult.isFailure) {
+                    throw readyResult.exceptionOrNull() ?: RuntimeException("Engine failed to start")
+                }
+
+                syncBoardToEngine()
+
+                val color = gtpColor(_uiState.value.aiColor)
+                val moveResult = engine.genmove(color)
+                if (moveResult.isFailure) {
+                    throw moveResult.exceptionOrNull() ?: RuntimeException("genmove failed")
+                }
+
+                val moveStr = moveResult.getOrThrow()
+                val move = Move.fromGtpPosition(_uiState.value.aiColor, moveStr, _game.getBoard().size)
+
+                withContext(Dispatchers.Main) {
+                    applyAiMove(move)
+                }
+
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    setEngineError(e.message ?: "AI 引擎错误")
+                    setAiThinking(false)
+                }
+            }
+        }
+    }
+
+    private suspend fun syncBoardToEngine() {
+        val engine = ensureEngine()
+        val history = _game.getMoveHistory()
+
+        engine.clearBoard().onFailure {
+            throw it
+        }
+
+        for (move in history) {
+            if (!move.isPass) {
+                val color = gtpColor(move.stone)
+                val pos = move.toGtpPosition()
+                engine.playMove(color, pos).onFailure { e ->
+                    throw e
+                }
+            }
+        }
+    }
+
+    private fun syncUndo() {
+        if (_uiState.value.gameMode != GameMode.PVE) return
+        aiJob?.cancel()
+        aiJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val engine = ensureEngine()
+                if (!engine.isReady()) return@launch
+                engine.undo()
+                engine.undo()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun syncClearBoard() {
+        if (_uiState.value.gameMode != GameMode.PVE) return
+        aiJob?.cancel()
+        aiJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val engine = ensureEngine()
+                if (!engine.isReady()) return@launch
+                engine.clearBoard()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun applyAiMove(move: Move) {
         if (move.isPass) {
             _game.pass()
         } else {
@@ -167,27 +216,25 @@ class GameViewModel(private val context: Context) : ViewModel() {
         updateUiState()
     }
 
-    private fun checkAndRequestAiMove() {
-        if (_uiState.value.gameMode != GameMode.PVE) return
-        if (_game.isGameOver()) return
-        if (_uiState.value.currentPlayer != _uiState.value.aiColor) return
-        if (_uiState.value.isAiThinking) return
-
-        if (!ensureEngineStarted()) return
-
-        requestAiMove()
+    private fun setAiThinking(thinking: Boolean) {
+        _uiState.value = _uiState.value.copy(isAiThinking = thinking)
     }
 
-    private fun requestAiMove() {
-        setAiThinking(true)
-        leelaManager?.genMove(_uiState.value.aiColor)
+    private fun setEngineError(error: String) {
+        _uiState.value = _uiState.value.copy(
+            engineError = error,
+            engineReady = false
+        )
     }
 
-    private fun syncEngineBoard() {
-        if (leelaManager?.isReady() != true) return
+    private fun clearEngineError() {
+        _uiState.value = _uiState.value.copy(engineError = null)
+    }
 
-        val lastMove = _game.getLastMove() ?: return
-        leelaManager?.playMove(lastMove)
+    private fun gtpColor(stone: Stone): String = when (stone) {
+        Stone.BLACK -> "b"
+        Stone.WHITE -> "w"
+        Stone.EMPTY -> "b"
     }
 
     private fun updateUiState() {
@@ -204,8 +251,9 @@ class GameViewModel(private val context: Context) : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
-        leelaManager?.stop()
-        leelaManager = null
+        aiJob?.cancel()
+        leelaEngine?.destroy()
+        leelaEngine = null
     }
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {

@@ -1,0 +1,9 @@
+# Leela Zero assets (binary + weights go here)
+#
+# DO NOT commit binary files to git!
+# Place the following files in this directory:
+#   - leelaz          (ARM64 precompiled binary)
+#   - lz_network.gz   (neural network weights)
+
+*.gz
+leelaz
