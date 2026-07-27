@@ -56,6 +56,12 @@ class GameViewModel(private val context: Context) : ViewModel() {
                     engineReady = true,
                     engineError = null
                 )
+                if (_uiState.value.gameMode == GameMode.PVE &&
+                    _uiState.value.currentPlayer == _uiState.value.aiColor &&
+                    !_game.isGameOver()
+                ) {
+                    requestAiMove()
+                }
             }
 
             override fun onEngineError(error: String) {
@@ -165,8 +171,14 @@ class GameViewModel(private val context: Context) : ViewModel() {
         if (_uiState.value.gameMode != GameMode.PVE) return
         if (_game.isGameOver()) return
         if (_uiState.value.currentPlayer != _uiState.value.aiColor) return
+        if (_uiState.value.isAiThinking) return
+
         if (!ensureEngineStarted()) return
 
+        requestAiMove()
+    }
+
+    private fun requestAiMove() {
         setAiThinking(true)
         leelaManager?.genMove(_uiState.value.aiColor)
     }

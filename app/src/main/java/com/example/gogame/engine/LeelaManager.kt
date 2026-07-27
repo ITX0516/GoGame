@@ -1,19 +1,24 @@
 package com.example.gogame.engine
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.example.gogame.engine.gtp.GtpCommand
 import com.example.gogame.engine.gtp.GtpResponse
 import com.example.gogame.model.Move
 import com.example.gogame.model.Stone
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class LeelaManager(private val context: Context) : GoEngine {
 
     private var callback: EngineCallback? = null
     private val isReady = AtomicBoolean(false)
     private val isStarted = AtomicBoolean(false)
-    private var pendingGenMoveColor: Stone? = null
+    private val pendingGenMoveColor = AtomicReference<Stone?>(null)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var aiTimeoutRunnable: Runnable? = null
 
     init {
         try {
@@ -38,11 +43,11 @@ class LeelaManager(private val context: Context) : GoEngine {
                     isStarted.set(true)
                     initializeEngine()
                 } else {
-                    callback?.onEngineError("Failed to start engine")
+                    postError("Failed to start engine")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting engine", e)
-                callback?.onEngineError("Engine start error: ${e.message}")
+                postError("Engine start error: ${e.message}")
             }
         }.start()
     }
@@ -57,17 +62,20 @@ class LeelaManager(private val context: Context) : GoEngine {
             sendCommandSync("komi 6.5")
 
             isReady.set(true)
-            callback?.onEngineReady()
+            postOnMain {
+                callback?.onEngineReady()
+            }
             Log.d(TAG, "Engine initialized and ready")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing engine", e)
-            callback?.onEngineError("Init error: ${e.message}")
+            postError("Init error: ${e.message}")
         }
     }
 
     override fun stop() {
         isReady.set(false)
         isStarted.set(false)
+        cancelAiTimeout()
         try {
             nativeStopEngine()
             nativeDestroyEngine()
@@ -79,35 +87,40 @@ class LeelaManager(private val context: Context) : GoEngine {
     override fun isReady(): Boolean = isReady.get()
 
     override fun setBoardSize(size: Int) {
-        sendCommand("boardsize $size")
+        nativeSendCommand("boardsize $size")
     }
 
     override fun clearBoard() {
-        sendCommand("clear_board")
+        nativeSendCommand("clear_board")
     }
 
     override fun playMove(move: Move) {
         val color = if (move.stone == Stone.BLACK) "b" else "w"
         val pos = move.toGtpPosition()
-        sendCommand("play $color $pos")
+        nativeSendCommand("play $color $pos")
     }
 
     override fun genMove(stone: Stone) {
-        pendingGenMoveColor = stone
+        if (pendingGenMoveColor.get() != null) {
+            Log.w(TAG, "genMove called while another is pending")
+            return
+        }
+        pendingGenMoveColor.set(stone)
+        startAiTimeout()
         val color = if (stone == Stone.BLACK) "b" else "w"
-        sendCommand("genmove $color")
+        nativeSendCommand("genmove $color")
     }
 
     override fun undo() {
-        sendCommand("undo")
+        nativeSendCommand("undo")
     }
 
     override fun setKomi(komi: Double) {
-        sendCommand("komi $komi")
+        nativeSendCommand("komi $komi")
     }
 
     override fun setTimeSettings(mainTime: Int, byoYomiTime: Int, byoYomiStones: Int) {
-        sendCommand("time_settings $mainTime $byoYomiTime $byoYomiStones")
+        nativeSendCommand("time_settings $mainTime $byoYomiTime $byoYomiStones")
     }
 
     override fun sendCommand(command: String): String {
@@ -143,36 +156,71 @@ class LeelaManager(private val context: Context) : GoEngine {
 
         val gtpResponse = GtpResponse.parse(response)
 
-        if (pendingGenMoveColor != null) {
+        if (pendingGenMoveColor.get() != null) {
             handleGenMoveResponse(gtpResponse)
             return
         }
 
-        callback?.onInfo(response.trim())
+        postOnMain {
+            callback?.onInfo(response.trim())
+        }
     }
 
     private fun handleGenMoveResponse(response: GtpResponse) {
-        val color = pendingGenMoveColor
-        pendingGenMoveColor = null
+        cancelAiTimeout()
+        val color = pendingGenMoveColor.getAndSet(null)
 
         if (!response.isSuccess || color == null) {
-            callback?.onEngineError("Genmove failed: ${response.content}")
+            postError("Genmove failed: ${response.content}")
             return
         }
 
         val moveStr = response.content.trim()
         try {
             val move = Move.fromGtpPosition(color, moveStr, 19)
-            callback?.onMoveGenerated(move)
+            postOnMain {
+                callback?.onMoveGenerated(move)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse move: $moveStr", e)
-            callback?.onEngineError("Failed to parse move: $moveStr")
+            postError("Failed to parse move: $moveStr")
         }
     }
 
     private fun sendCommandSync(command: String): GtpResponse {
         val responseStr = nativeSendCommandSync(command)
         return GtpResponse.parse(responseStr)
+    }
+
+    private fun startAiTimeout() {
+        cancelAiTimeout()
+        aiTimeoutRunnable = Runnable {
+            Log.e(TAG, "AI move timed out")
+            pendingGenMoveColor.set(null)
+            postError("AI 思考超时")
+        }
+        mainHandler.postDelayed(aiTimeoutRunnable!!, AI_TIMEOUT_MS)
+    }
+
+    private fun cancelAiTimeout() {
+        aiTimeoutRunnable?.let {
+            mainHandler.removeCallbacks(it)
+            aiTimeoutRunnable = null
+        }
+    }
+
+    private fun postError(error: String) {
+        postOnMain {
+            callback?.onEngineError(error)
+        }
+    }
+
+    private fun postOnMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            mainHandler.post(action)
+        }
     }
 
     private external fun nativeInitEngine()
@@ -187,5 +235,6 @@ class LeelaManager(private val context: Context) : GoEngine {
 
     companion object {
         private const val TAG = "LeelaManager"
+        private const val AI_TIMEOUT_MS = 30000L
     }
 }
