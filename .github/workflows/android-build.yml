@@ -49,16 +49,14 @@ jobs:
             BINARY_URL="$CUSTOM_URL"
           elif [ -n "$SECRET_URL" ]; then
             BINARY_URL="$SECRET_URL"
+          else
+            # 默认从 Grant-Tao/compiled-leelaz-0.17-for-android-phones 下载
+            # 使用 leelaz_855 版本 (骁龙855/ARM64)
+            BINARY_URL="https://raw.githubusercontent.com/Grant-Tao/compiled-leelaz-0.17-for-android-phones/master/leelaz_855"
           fi
 
-          if [ -z "$BINARY_URL" ]; then
-            echo "⚠️  No leelaz binary URL provided."
-            echo "   Build will proceed WITHOUT AI engine."
-            echo "   To add AI, set LEELAZ_BINARY_URL secret or provide URL via workflow_dispatch."
-            exit 0
-          fi
-
-          echo "Downloading leelaz binary..."
+          echo "Downloading leelaz binary from:"
+          echo "  $BINARY_URL"
           curl -sL -o leelaz "$BINARY_URL"
 
           # 验证：检查文件大小 (> 100KB 才算有效二进制)
