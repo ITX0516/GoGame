@@ -20,14 +20,14 @@ class LeelaEngine(private val context: Context) {
     @Volatile private var isInitialized = false
     @Volatile private var engineReady = false
 
-    private val filesDir: File
-        get() = context.filesDir
+    private val workDir: File
+        get() = context.cacheDir
 
     private val binaryPath: String
-        get() = File(filesDir, BINARY_NAME).absolutePath
+        get() = File(workDir, BINARY_NAME).absolutePath
 
     private val weightsPath: String
-        get() = File(filesDir, WEIGHTS_NAME).absolutePath
+        get() = File(workDir, WEIGHTS_NAME).absolutePath
 
     suspend fun ensureEngineReady(): Result<Unit> = withContext(Dispatchers.IO) {
         synchronized(lock) {
@@ -53,24 +53,29 @@ class LeelaEngine(private val context: Context) {
     }
 
     private fun copyAssetsIfNeeded() {
-        val binaryFile = File(filesDir, BINARY_NAME)
-        val weightsFile = File(filesDir, WEIGHTS_NAME)
+        val binaryFile = File(workDir, BINARY_NAME)
+        val weightsFile = File(workDir, WEIGHTS_NAME)
 
         if (!binaryFile.exists()) {
-            Log.d(TAG, "Copying binary from assets...")
+            Log.d(TAG, "Copying binary from assets to ${binaryFile.absolutePath}...")
             if (assetExists(BINARY_NAME)) {
                 copyAsset(BINARY_NAME, binaryFile)
-                binaryFile.setExecutable(true)
+                makeExecutable(binaryFile)
             } else {
                 throw IllegalStateException(
                     "Leela Zero binary not found in assets. " +
                     "Please place 'leelaz' (ARM64) and 'lz_network.lz' in app/src/main/assets/"
                 )
             }
+        } else {
+            if (!binaryFile.canExecute()) {
+                Log.w(TAG, "Binary exists but not executable, re-applying permissions...")
+                makeExecutable(binaryFile)
+            }
         }
 
         if (!weightsFile.exists()) {
-            Log.d(TAG, "Copying weights from assets...")
+            Log.d(TAG, "Copying weights from assets to ${weightsFile.absolutePath}...")
             if (assetExists(WEIGHTS_NAME)) {
                 copyAsset(WEIGHTS_NAME, weightsFile)
             } else {
@@ -80,6 +85,48 @@ class LeelaEngine(private val context: Context) {
                 )
             }
         }
+    }
+
+    private fun makeExecutable(file: File) {
+        Log.d(TAG, "Setting executable permission for ${file.name}...")
+
+        if (file.canExecute()) {
+            Log.d(TAG, "Already executable, skipping")
+            return
+        }
+
+        val apiSuccess = file.setExecutable(true, false)
+        Log.d(TAG, "setExecutable() returned: $apiSuccess, canExecute: ${file.canExecute()}")
+
+        if (!file.canExecute()) {
+            Log.w(TAG, "Kotlin API failed, trying chmod command...")
+            try {
+                val chmodProcess = Runtime.getRuntime().exec(
+                    arrayOf("chmod", "755", file.absolutePath)
+                )
+                val exitCode = chmodProcess.waitFor()
+                Log.d(TAG, "chmod exit code: $exitCode, canExecute: ${file.canExecute()}")
+
+                if (file.canExecute()) {
+                    Log.i(TAG, "chmod 755 succeeded")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "chmod command failed", e)
+            }
+        }
+
+        if (!file.canExecute()) {
+            Log.e(TAG, "WARNING: Could not make ${file.name} executable!")
+            Log.e(TAG, "  File path: ${file.absolutePath}")
+            Log.e(TAG, "  File exists: ${file.exists()}")
+            Log.e(TAG, "  File size: ${file.length()}")
+            throw IllegalStateException(
+                "Cannot grant execute permission to leelaz binary. " +
+                "Path: ${file.absolutePath}"
+            )
+        }
+
+        Log.i(TAG, "Binary permission check passed: ${file.name} is executable")
     }
 
     private fun assetExists(assetName: String): Boolean {
@@ -102,22 +149,34 @@ class LeelaEngine(private val context: Context) {
         Log.d(TAG, "Starting leelaz process...")
         Log.d(TAG, "Binary: $binaryPath")
         Log.d(TAG, "Weights: $weightsPath")
+        Log.d(TAG, "Work dir: ${workDir.absolutePath}")
+        Log.d(TAG, "Binary exists: ${File(binaryPath).exists()}")
+        Log.d(TAG, "Binary canExecute: ${File(binaryPath).canExecute()}")
+        Log.d(TAG, "Weights exists: ${File(weightsPath).exists()}")
 
         val pb = ProcessBuilder(
             binaryPath,
             "--gtp",
             "--weights", weightsPath
         )
-        pb.directory(filesDir)
+        pb.directory(workDir)
         pb.redirectErrorStream(false)
 
-        process = pb.start()
+        try {
+            process = pb.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start process", e)
+            Log.e(TAG, "Error message: ${e.message}")
+            drainErrorStream()
+            throw e
+        }
+
         writer = BufferedWriter(OutputStreamWriter(process!!.outputStream))
         reader = BufferedReader(InputStreamReader(process!!.inputStream))
         errorReader = BufferedReader(InputStreamReader(process!!.errorStream))
 
         isInitialized = true
-        Log.d(TAG, "Process started")
+        Log.d(TAG, "Process started, PID: ${process!!.pid()}")
     }
 
     suspend fun genmove(color: String): Result<String> = withContext(Dispatchers.IO) {
