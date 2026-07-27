@@ -278,7 +278,7 @@ class LeelaEngine(private val context: Context) {
     companion object {
         private const val TAG = "LeelaEngine"
         private const val BINARY_NAME = "leelaz"
-        private const val WEIGHTS_NAME = "lz_network.gz"
+        private const val WEIGHTS_NAME = "lz_network.lz"
         private const val DEFAULT_KOMI = 7.5
     }
 }

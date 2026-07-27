@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      leelaz_binary_url:
+        description: 'Custom leelaz binary download URL (optional)'
+        required: false
+        default: ''
+      weights_url:
+        description: 'Custom network weights download URL (optional)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -32,43 +41,76 @@ jobs:
         run: |
           cd app/src/main/assets
 
-          # 尝试从多个来源下载 leelaz 二进制
-          # 来源 1: 用户自己的 release（需要先上传）
-          # 来源 2: 其他已知的预编译版本
+          CUSTOM_URL="${{ github.event.inputs.leelaz_binary_url }}"
+          SECRET_URL="${LEELAZ_BINARY_URL:-}"
 
-          BINARY_URL="${LEELAZ_BINARY_URL:-}"
-
-          if [ -n "$BINARY_URL" ]; then
-            echo "Downloading from custom URL..."
-            curl -sL -o leelaz "$BINARY_URL" && chmod +x leelaz && echo "Download OK" && exit 0
+          BINARY_URL=""
+          if [ -n "$CUSTOM_URL" ]; then
+            BINARY_URL="$CUSTOM_URL"
+          elif [ -n "$SECRET_URL" ]; then
+            BINARY_URL="$SECRET_URL"
           fi
 
-          # 尝试从 leelaApplication 项目获取（如果有公开的 release）
-          echo "Trying alternative sources..."
+          if [ -z "$BINARY_URL" ]; then
+            echo "⚠️  No leelaz binary URL provided."
+            echo "   Build will proceed WITHOUT AI engine."
+            echo "   To add AI, set LEELAZ_BINARY_URL secret or provide URL via workflow_dispatch."
+            exit 0
+          fi
 
-          # 占位：如果以上都失败，创建一个占位文件，构建继续（只是没有AI）
-          echo "WARNING: leelaz binary not found, building without AI engine"
-          echo "# placeholder - add real leelaz binary for full AI functionality" > leelaz.placeholder
-          echo "AI engine will not be available in this build"
+          echo "Downloading leelaz binary..."
+          curl -sL -o leelaz "$BINARY_URL"
+
+          # 验证：检查文件大小 (> 100KB 才算有效二进制)
+          SIZE=$(stat -c%s leelaz 2>/dev/null || echo 0)
+          echo "Downloaded size: $SIZE bytes"
+
+          if [ "$SIZE" -gt 102400 ]; then
+            chmod +x leelaz
+            echo "✅ leelaz binary downloaded OK ($SIZE bytes)"
+            file leelaz
+          else
+            echo "⚠️  Download seems too small ($SIZE bytes), removing..."
+            rm -f leelaz
+            echo "   Build will proceed WITHOUT AI engine."
+          fi
 
       - name: Download Leela Zero network weights
         run: |
           cd app/src/main/assets
 
-          # 使用 Leela Zero 官方 15b 权重（约 40MB，轻量稳定）
-          WEIGHTS_URL="https://zero.sjeng.org/networks/15b/1145460e22f0f47c4667958b995fbd4f4ea6e4ba01548cd5f6d4f17683f9c29e.gz"
+          CUSTOM_URL="${{ github.event.inputs.weights_url }}"
+
+          # 默认使用 Leela Zero 官方 15b 权重
+          DEFAULT_WEIGHTS="https://zero.sjeng.org/networks/15b/1145460e22f0f47c4667958b995fbd4f4ea6e4ba01548cd5f6d4f17683f9c29e.gz"
+
+          WEIGHTS_URL="${CUSTOM_URL:-$DEFAULT_WEIGHTS}"
 
           echo "Downloading network weights..."
+          echo "URL: $WEIGHTS_URL"
           curl -sL -o lz_network.gz "$WEIGHTS_URL"
 
-          # 验证文件（检查是否为 gzip 格式）
-          if file lz_network.gz | grep -q gzip; then
-            echo "Weights downloaded OK"
-            ls -lh lz_network.gz
+          # 验证：检查是否为 gzip 格式（检查 magic number: 1f 8b）
+          if file lz_network.gz | grep -q "gzip compressed"; then
+            SIZE=$(stat -c%s lz_network.gz 2>/dev/null || echo 0)
+            echo "✅ Weights downloaded OK ($SIZE bytes, gzip format)"
+
+            # 重命名为 .lz 后缀，避免 Android aapt 自动解压 .gz 文件
+            mv lz_network.gz lz_network.lz
+            echo "Renamed to lz_network.lz (avoids aapt auto-extraction)"
           else
-            echo "WARNING: weights download may have failed"
+            echo "⚠️  Weights download failed or not a gzip file"
             file lz_network.gz
+            head -c 100 lz_network.gz | hexdump -C | head -5
+            rm -f lz_network.gz
+            echo "   Build will proceed WITHOUT network weights."
           fi
+
+      - name: List assets directory
+        run: |
+          echo "=== Assets contents ==="
+          ls -lh app/src/main/assets/
+          echo "======================="
 
       - name: Download Gradle Wrapper JAR
         run: |
@@ -96,8 +138,9 @@ jobs:
           echo "APK file: $APK_FILE"
           echo "APK size: $(du -h "$APK_FILE" | cut -f1)"
           echo ""
-          echo "Assets in APK:"
-          unzip -l "$APK_FILE" | grep -E "assets/|lz_network|leelaz" || echo "(no matching assets found)"
+          echo "=== Assets in APK ==="
+          unzip -l "$APK_FILE" | grep "assets/" || echo "(no assets listed)"
+          echo "====================="
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

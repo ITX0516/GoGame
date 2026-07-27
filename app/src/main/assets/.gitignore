@@ -6,4 +6,5 @@
 #   - lz_network.gz   (neural network weights)
 
 *.gz
+*.lz
 leelaz
