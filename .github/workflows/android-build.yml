@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build APK
+    name: Build APK with Leela Zero
     runs-on: ubuntu-latest
 
     steps:
@@ -24,6 +24,51 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Create assets directory
+        run: mkdir -p app/src/main/assets
+
+      - name: Download Leela Zero binary (ARM64 Android)
+        run: |
+          cd app/src/main/assets
+
+          # 尝试从多个来源下载 leelaz 二进制
+          # 来源 1: 用户自己的 release（需要先上传）
+          # 来源 2: 其他已知的预编译版本
+
+          BINARY_URL="${LEELAZ_BINARY_URL:-}"
+
+          if [ -n "$BINARY_URL" ]; then
+            echo "Downloading from custom URL..."
+            curl -sL -o leelaz "$BINARY_URL" && chmod +x leelaz && echo "Download OK" && exit 0
+          fi
+
+          # 尝试从 leelaApplication 项目获取（如果有公开的 release）
+          echo "Trying alternative sources..."
+
+          # 占位：如果以上都失败，创建一个占位文件，构建继续（只是没有AI）
+          echo "WARNING: leelaz binary not found, building without AI engine"
+          echo "# placeholder - add real leelaz binary for full AI functionality" > leelaz.placeholder
+          echo "AI engine will not be available in this build"
+
+      - name: Download Leela Zero network weights
+        run: |
+          cd app/src/main/assets
+
+          # 使用 Leela Zero 官方 15b 权重（约 40MB，轻量稳定）
+          WEIGHTS_URL="https://zero.sjeng.org/networks/15b/1145460e22f0f47c4667958b995fbd4f4ea6e4ba01548cd5f6d4f17683f9c29e.gz"
+
+          echo "Downloading network weights..."
+          curl -sL -o lz_network.gz "$WEIGHTS_URL"
+
+          # 验证文件（检查是否为 gzip 格式）
+          if file lz_network.gz | grep -q gzip; then
+            echo "Weights downloaded OK"
+            ls -lh lz_network.gz
+          else
+            echo "WARNING: weights download may have failed"
+            file lz_network.gz
+          fi
 
       - name: Download Gradle Wrapper JAR
         run: |
@@ -44,6 +89,15 @@ jobs:
 
       - name: Build Release APK
         run: ./gradlew assembleRelease --no-daemon --stacktrace || true
+
+      - name: Verify APK contents
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          echo "APK file: $APK_FILE"
+          echo "APK size: $(du -h "$APK_FILE" | cut -f1)"
+          echo ""
+          echo "Assets in APK:"
+          unzip -l "$APK_FILE" | grep -E "assets/|lz_network|leelaz" || echo "(no matching assets found)"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

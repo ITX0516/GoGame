@@ -58,13 +58,35 @@ class LeelaEngine(private val context: Context) {
 
         if (!binaryFile.exists()) {
             Log.d(TAG, "Copying binary from assets...")
-            copyAsset(BINARY_NAME, binaryFile)
-            binaryFile.setExecutable(true)
+            if (assetExists(BINARY_NAME)) {
+                copyAsset(BINARY_NAME, binaryFile)
+                binaryFile.setExecutable(true)
+            } else {
+                throw IllegalStateException(
+                    "Leela Zero binary not found in assets. " +
+                    "Please place 'leelaz' (ARM64) and 'lz_network.gz' in app/src/main/assets/"
+                )
+            }
         }
 
         if (!weightsFile.exists()) {
             Log.d(TAG, "Copying weights from assets...")
-            copyAsset(WEIGHTS_NAME, weightsFile)
+            if (assetExists(WEIGHTS_NAME)) {
+                copyAsset(WEIGHTS_NAME, weightsFile)
+            } else {
+                throw IllegalStateException(
+                    "Network weights not found in assets. " +
+                    "Please place 'lz_network.gz' in app/src/main/assets/"
+                )
+            }
+        }
+    }
+
+    private fun assetExists(assetName: String): Boolean {
+        return try {
+            context.assets.list("")?.contains(assetName) == true
+        } catch (e: Exception) {
+            false
         }
     }
 
