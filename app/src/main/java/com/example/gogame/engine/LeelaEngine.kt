@@ -9,8 +9,6 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 class LeelaEngine(private val context: Context) {
 
@@ -18,9 +16,9 @@ class LeelaEngine(private val context: Context) {
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
     private var errorReader: BufferedReader? = null
-    private val lock = ReentrantLock()
-    private var isInitialized = false
-    private var engineReady = false
+    private val lock = Any()
+    @Volatile private var isInitialized = false
+    @Volatile private var engineReady = false
 
     private val filesDir: File
         get() = context.filesDir
@@ -32,15 +30,17 @@ class LeelaEngine(private val context: Context) {
         get() = File(filesDir, WEIGHTS_NAME).absolutePath
 
     suspend fun ensureEngineReady(): Result<Unit> = withContext(Dispatchers.IO) {
-        lock.withLock {
+        synchronized(lock) {
             if (engineReady && isProcessAlive()) {
-                return@withContext Result.success(Unit)
+                return@synchronized Result.success(Unit)
             }
 
             try {
                 copyAssetsIfNeeded()
                 startProcess()
-                initGame(19)
+                sendCommandSync("boardsize 19")
+                sendCommandSync("komi $DEFAULT_KOMI")
+                sendCommandSync("clear_board")
                 engineReady = true
                 Log.d(TAG, "Engine ready")
                 Result.success(Unit)
@@ -52,7 +52,7 @@ class LeelaEngine(private val context: Context) {
         }
     }
 
-    private suspend fun copyAssetsIfNeeded() = withContext(Dispatchers.IO) {
+    private fun copyAssetsIfNeeded() {
         val binaryFile = File(filesDir, BINARY_NAME)
         val weightsFile = File(filesDir, WEIGHTS_NAME)
 
@@ -95,27 +95,13 @@ class LeelaEngine(private val context: Context) {
         errorReader = BufferedReader(InputStreamReader(process!!.errorStream))
 
         isInitialized = true
-        Log.d(TAG, "Process started, PID: ${process?.pid()}")
-    }
-
-    suspend fun initGame(size: Int): Result<Unit> = withContext(Dispatchers.IO) {
-        lock.withLock {
-            try {
-                sendCommand("boardsize $size")
-                sendCommand("komi $DEFAULT_KOMI")
-                sendCommand("clear_board")
-                Result.success(Unit)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to init game", e)
-                Result.failure(e)
-            }
-        }
+        Log.d(TAG, "Process started")
     }
 
     suspend fun genmove(color: String): Result<String> = withContext(Dispatchers.IO) {
-        lock.withLock {
+        synchronized(lock) {
             try {
-                val response = sendCommand("genmove $color")
+                val response = sendCommandSync("genmove $color")
                 val move = parseGtpResponse(response)
                 Log.d(TAG, "genmove $color = $move")
                 Result.success(move)
@@ -127,9 +113,9 @@ class LeelaEngine(private val context: Context) {
     }
 
     suspend fun playMove(color: String, coord: String): Result<Unit> = withContext(Dispatchers.IO) {
-        lock.withLock {
+        synchronized(lock) {
             try {
-                sendCommand("play $color $coord")
+                sendCommandSync("play $color $coord")
                 Result.success(Unit)
             } catch (e: Exception) {
                 Log.e(TAG, "playMove failed", e)
@@ -139,9 +125,9 @@ class LeelaEngine(private val context: Context) {
     }
 
     suspend fun undo(): Result<Unit> = withContext(Dispatchers.IO) {
-        lock.withLock {
+        synchronized(lock) {
             try {
-                sendCommand("undo")
+                sendCommandSync("undo")
                 Result.success(Unit)
             } catch (e: Exception) {
                 Log.e(TAG, "undo failed", e)
@@ -151,9 +137,9 @@ class LeelaEngine(private val context: Context) {
     }
 
     suspend fun clearBoard(): Result<Unit> = withContext(Dispatchers.IO) {
-        lock.withLock {
+        synchronized(lock) {
             try {
-                sendCommand("clear_board")
+                sendCommandSync("clear_board")
                 Result.success(Unit)
             } catch (e: Exception) {
                 Log.e(TAG, "clearBoard failed", e)
@@ -162,7 +148,7 @@ class LeelaEngine(private val context: Context) {
         }
     }
 
-    private fun sendCommand(command: String): String {
+    private fun sendCommandSync(command: String): String {
         if (!isProcessAlive()) {
             throw IllegalStateException("Engine process is not running")
         }
@@ -232,7 +218,7 @@ class LeelaEngine(private val context: Context) {
     }
 
     fun destroy() {
-        lock.withLock {
+        synchronized(lock) {
             try {
                 if (isProcessAlive()) {
                     try {
