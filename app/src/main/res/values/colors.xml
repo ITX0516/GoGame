@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="board_brown">#DEB887</color>
+    <color name="board_line">#000000</color>
+    <color name="black_stone">#1A1A1A</color>
+    <color name="white_stone">#F5F5F5</color>
+    <color name="star_point">#000000</color>
+</resources>

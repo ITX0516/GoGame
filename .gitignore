@@ -1,0 +1,38 @@
+# Gradle
+.gradle/
+build/
+
+# Local configuration
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+.cxx/
+
+# Keystore
+*.jks
+*.keystore
+
+# Native
+*.so
+!src/main/cpp/**/*.cpp
+!src/main/cpp/**/*.h
+!src/main/cpp/CMakeLists.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pem
+*.p12
+env.local

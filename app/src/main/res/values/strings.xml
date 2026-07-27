@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">围棋 GoGame</string>
+    <string name="black">黑方</string>
+    <string name="white">白方</string>
+    <string name="pass">虚手</string>
+    <string name="resign">认输</string>
+    <string name="new_game">新局</string>
+    <string name="undo">悔棋</string>
+    <string name="pvp_mode">双人对战</string>
+    <string name="pve_mode">人机对战</string>
+    <string name="thinking">AI思考中...</string>
+    <string name="black_wins">黑方胜</string>
+    <string name="white_wins">白方胜</string>
+    <string name="board_size">棋盘大小</string>
+</resources>
