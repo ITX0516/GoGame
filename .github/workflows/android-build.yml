@@ -39,7 +39,8 @@ jobs:
 
       - name: Download Leela Zero binary (ARM64 Android)
         run: |
-          cd app/src/main/assets
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cd app/src/main/jniLibs/arm64-v8a
 
           CUSTOM_URL="${{ github.event.inputs.leelaz_binary_url }}"
           SECRET_URL="${LEELAZ_BINARY_URL:-}"
@@ -57,19 +58,19 @@ jobs:
 
           echo "Downloading leelaz binary from:"
           echo "  $BINARY_URL"
-          curl -sL -o leelaz "$BINARY_URL"
+          curl -sL -o libleelaz.so "$BINARY_URL"
 
           # 验证：检查文件大小 (> 100KB 才算有效二进制)
-          SIZE=$(stat -c%s leelaz 2>/dev/null || echo 0)
+          SIZE=$(stat -c%s libleelaz.so 2>/dev/null || echo 0)
           echo "Downloaded size: $SIZE bytes"
 
           if [ "$SIZE" -gt 102400 ]; then
-            chmod +x leelaz
+            chmod +x libleelaz.so
             echo "✅ leelaz binary downloaded OK ($SIZE bytes)"
-            file leelaz
+            file libleelaz.so
           else
             echo "⚠️  Download seems too small ($SIZE bytes), removing..."
-            rm -f leelaz
+            rm -f libleelaz.so
             echo "   Build will proceed WITHOUT AI engine."
           fi
 
@@ -106,10 +107,12 @@ jobs:
             echo "   Build will proceed WITHOUT network weights."
           fi
 
-      - name: List assets directory
+      - name: List assets and jniLibs
         run: |
           echo "=== Assets contents ==="
-          ls -lh app/src/main/assets/
+          ls -lh app/src/main/assets/ 2>/dev/null || echo "(empty)"
+          echo "=== jniLibs/arm64-v8a contents ==="
+          ls -lh app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || echo "(empty)"
           echo "======================="
 
       - name: Download Gradle Wrapper JAR
@@ -141,6 +144,10 @@ jobs:
           echo "=== Assets in APK ==="
           unzip -l "$APK_FILE" | grep "assets/" || echo "(no assets listed)"
           echo "====================="
+          echo ""
+          echo "=== Native libs in APK ==="
+          unzip -l "$APK_FILE" | grep "lib/" || echo "(no native libs listed)"
+          echo "=========================="
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

@@ -21,10 +21,10 @@ class LeelaEngine(private val context: Context) {
     @Volatile private var engineReady = false
 
     private val workDir: File
-        get() = context.cacheDir
+        get() = context.filesDir
 
     private val binaryPath: String
-        get() = File(workDir, BINARY_NAME).absolutePath
+        get() = File(context.applicationInfo.nativeLibraryDir, BINARY_NAME).absolutePath
 
     private val weightsPath: String
         get() = File(workDir, WEIGHTS_NAME).absolutePath
@@ -36,7 +36,7 @@ class LeelaEngine(private val context: Context) {
             }
 
             try {
-                copyAssetsIfNeeded()
+                prepareWeights()
                 startProcess()
                 sendCommandSync("boardsize 19")
                 sendCommandSync("komi $DEFAULT_KOMI")
@@ -52,27 +52,8 @@ class LeelaEngine(private val context: Context) {
         }
     }
 
-    private fun copyAssetsIfNeeded() {
-        val binaryFile = File(workDir, BINARY_NAME)
+    private fun prepareWeights() {
         val weightsFile = File(workDir, WEIGHTS_NAME)
-
-        if (!binaryFile.exists()) {
-            Log.d(TAG, "Copying binary from assets to ${binaryFile.absolutePath}...")
-            if (assetExists(BINARY_NAME)) {
-                copyAsset(BINARY_NAME, binaryFile)
-                makeExecutable(binaryFile)
-            } else {
-                throw IllegalStateException(
-                    "Leela Zero binary not found in assets. " +
-                    "Please place 'leelaz' (ARM64) and 'lz_network.lz' in app/src/main/assets/"
-                )
-            }
-        } else {
-            if (!binaryFile.canExecute()) {
-                Log.w(TAG, "Binary exists but not executable, re-applying permissions...")
-                makeExecutable(binaryFile)
-            }
-        }
 
         if (!weightsFile.exists()) {
             Log.d(TAG, "Copying weights from assets to ${weightsFile.absolutePath}...")
@@ -85,48 +66,33 @@ class LeelaEngine(private val context: Context) {
                 )
             }
         }
-    }
 
-    private fun makeExecutable(file: File) {
-        Log.d(TAG, "Setting executable permission for ${file.name}...")
+        val binaryFile = File(binaryPath)
+        Log.d(TAG, "Binary location: $binaryPath")
+        Log.d(TAG, "Binary exists: ${binaryFile.exists()}")
+        Log.d(TAG, "Binary canExecute: ${binaryFile.canExecute()}")
+        Log.d(TAG, "Weights exists: ${weightsFile.exists()}")
 
-        if (file.canExecute()) {
-            Log.d(TAG, "Already executable, skipping")
-            return
-        }
-
-        val apiSuccess = file.setExecutable(true, false)
-        Log.d(TAG, "setExecutable() returned: $apiSuccess, canExecute: ${file.canExecute()}")
-
-        if (!file.canExecute()) {
-            Log.w(TAG, "Kotlin API failed, trying chmod command...")
-            try {
-                val chmodProcess = Runtime.getRuntime().exec(
-                    arrayOf("chmod", "755", file.absolutePath)
-                )
-                val exitCode = chmodProcess.waitFor()
-                Log.d(TAG, "chmod exit code: $exitCode, canExecute: ${file.canExecute()}")
-
-                if (file.canExecute()) {
-                    Log.i(TAG, "chmod 755 succeeded")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "chmod command failed", e)
-            }
-        }
-
-        if (!file.canExecute()) {
-            Log.e(TAG, "WARNING: Could not make ${file.name} executable!")
-            Log.e(TAG, "  File path: ${file.absolutePath}")
-            Log.e(TAG, "  File exists: ${file.exists()}")
-            Log.e(TAG, "  File size: ${file.length()}")
+        if (!binaryFile.exists()) {
             throw IllegalStateException(
-                "Cannot grant execute permission to leelaz binary. " +
-                "Path: ${file.absolutePath}"
+                "Leela Zero binary not found at $binaryPath. " +
+                "Make sure jniLibs/arm64-v8a/leelaz is included in the APK."
             )
         }
 
-        Log.i(TAG, "Binary permission check passed: ${file.name} is executable")
+        if (!binaryFile.canExecute()) {
+            Log.w(TAG, "Binary in nativeLibraryDir is not executable, trying chmod...")
+            try {
+                val chmodProcess = Runtime.getRuntime().exec(
+                    arrayOf("chmod", "755", binaryFile.absolutePath)
+                )
+                chmodProcess.waitFor()
+            } catch (_: Exception) {
+            }
+            if (!binaryFile.canExecute()) {
+                throw IllegalStateException("Binary is not executable: $binaryPath")
+            }
+        }
     }
 
     private fun assetExists(assetName: String): Boolean {
@@ -336,7 +302,7 @@ class LeelaEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "LeelaEngine"
-        private const val BINARY_NAME = "leelaz"
+        private const val BINARY_NAME = "libleelaz.so"
         private const val WEIGHTS_NAME = "lz_network.lz"
         private const val DEFAULT_KOMI = 7.5
     }
