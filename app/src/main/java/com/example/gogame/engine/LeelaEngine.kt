@@ -176,7 +176,7 @@ class LeelaEngine(private val context: Context) {
         errorReader = BufferedReader(InputStreamReader(process!!.errorStream))
 
         isInitialized = true
-        Log.d(TAG, "Process started, PID: ${process!!.pid()}")
+        Log.d(TAG, "Process started successfully")
     }
 
     suspend fun genmove(color: String): Result<String> = withContext(Dispatchers.IO) {
