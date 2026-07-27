@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.gogame.model.Stone
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameInfoPanel(
     currentPlayer: Stone,
@@ -35,7 +36,7 @@ fun GameInfoPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Spacing.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
