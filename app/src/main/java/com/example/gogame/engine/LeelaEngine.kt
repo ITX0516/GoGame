@@ -64,7 +64,7 @@ class LeelaEngine(private val context: Context) {
             } else {
                 throw IllegalStateException(
                     "Leela Zero binary not found in assets. " +
-                    "Please place 'leelaz' (ARM64) and 'lz_network.gz' in app/src/main/assets/"
+                    "Please place 'leelaz' (ARM64) and 'lz_network.lz' in app/src/main/assets/"
                 )
             }
         }
@@ -76,7 +76,7 @@ class LeelaEngine(private val context: Context) {
             } else {
                 throw IllegalStateException(
                     "Network weights not found in assets. " +
-                    "Please place 'lz_network.gz' in app/src/main/assets/"
+                    "Please place 'lz_network.lz' in app/src/main/assets/"
                 )
             }
         }

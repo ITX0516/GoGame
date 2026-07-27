@@ -79,8 +79,9 @@ jobs:
 
           CUSTOM_URL="${{ github.event.inputs.weights_url }}"
 
-          # 默认使用 Leela Zero 官方 15b 权重
-          DEFAULT_WEIGHTS="https://zero.sjeng.org/networks/15b/1145460e22f0f47c4667958b995fbd4f4ea6e4ba01548cd5f6d4f17683f9c29e.gz"
+          # 默认使用 PhoenixGo_v1 权重 (256x19, 约16MB，轻量且棋力不错)
+          # 来源: 腾讯PhoenixGo，Leela Zero兼容格式
+          DEFAULT_WEIGHTS="https://github.com/yenw/LeelaZero_PhoenixGo/releases/download/v1/PhoenixGo_v1.txt.gz"
 
           WEIGHTS_URL="${CUSTOM_URL:-$DEFAULT_WEIGHTS}"
 
@@ -91,15 +92,16 @@ jobs:
           # 验证：检查是否为 gzip 格式（检查 magic number: 1f 8b）
           if file lz_network.gz | grep -q "gzip compressed"; then
             SIZE=$(stat -c%s lz_network.gz 2>/dev/null || echo 0)
-            echo "✅ Weights downloaded OK ($SIZE bytes, gzip format)"
+            SIZE_MB=$(echo "scale=1; $SIZE / 1048576" | bc)
+            echo "✅ Weights downloaded OK ($SIZE bytes = ${SIZE_MB}MB, gzip format)"
 
             # 重命名为 .lz 后缀，避免 Android aapt 自动解压 .gz 文件
             mv lz_network.gz lz_network.lz
             echo "Renamed to lz_network.lz (avoids aapt auto-extraction)"
           else
             echo "⚠️  Weights download failed or not a gzip file"
-            file lz_network.gz
-            head -c 100 lz_network.gz | hexdump -C | head -5
+            file lz_network.gz 2>/dev/null || echo "file command failed"
+            head -c 100 lz_network.gz 2>/dev/null | hexdump -C | head -5 || echo "hexdump failed"
             rm -f lz_network.gz
             echo "   Build will proceed WITHOUT network weights."
           fi
